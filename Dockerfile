@@ -1,58 +1,81 @@
-# syntax=docker.io/docker/dockerfile:1
+# 使用多阶段构建优化镜像体积
+FROM node:18-alpine AS builder
 
-FROM node:20-alpine AS base
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN npm install -g corepack@latest && corepack enable
+# 安装构建依赖（Chromium + 系统库）
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    git
+
+# 配置Chromium环境变量
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
+# 启用并配置pnpm
+RUN corepack enable
+RUN npm install -g corepack@latest
+# 使用明确的稳定版本
+RUN corepack prepare pnpm@8.15.4 --activate
 
 WORKDIR /app
 
-# Install dependencies only when needed
-FROM base AS deps
+# 优先复制包管理文件
 COPY package.json pnpm-lock.yaml* ./
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install  --frozen-lockfile --force
 
-# Rebuild the source code only when needed
-FROM base AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+# 安装所有依赖
+RUN pnpm install --frozen-lockfile
+
+# 复制项目文件
 COPY . .
 
-# Next.js collects completely anonymous telemetry data about general usage.
-# Learn more here: https://nextjs.org/telemetry
-# Uncomment the following line in case you want to disable telemetry during the build.
-# ENV NEXT_TELEMETRY_DISABLED 1
+# 构建项目
+RUN pnpm build
 
-RUN pnpm run build
+# 生产阶段
+FROM node:18-alpine AS production
 
-# Production image, copy all the files and run next
-FROM base AS runner
+# 安装运行时依赖
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+# 配置环境变量
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV NODE_ENV=production
+
+# 启用并配置pnpm
+RUN corepack enable
+RUN npm install -g corepack@latest
+# 使用明确的稳定版本
+RUN corepack prepare pnpm@8.15.4 --activate
+
 WORKDIR /app
 
-ENV NODE_ENV production
-# Uncomment the following line in case you want to disable telemetry during runtime.
-# ENV NEXT_TELEMETRY_DISABLED 1
+# 复制包管理文件
+COPY --from=builder /app/package.json .
+COPY --from=builder /app/pnpm-lock.yaml .
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# 仅安装生产依赖
+RUN pnpm install --prod --frozen-lockfile
 
+# 复制构建产物
+COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
+# 如果有配置文件需要添加
+COPY next.config.mjs ./
+# 国际化配置
+#COPY --from=builder /app/next-i18next.config.js ./
 
-# Set the correct permission for prerender cache
-RUN mkdir .next
-RUN chown nextjs:nodejs .next
-
-# Automatically leverage output traces to reduce image size
-# https://nextjs.org/docs/advanced-features/output-file-tracing
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
-
+# 暴露端口
 EXPOSE 3000
 
-ENV PORT 3000
-# set hostname to localhost
-ENV HOSTNAME "0.0.0.0"
-
-CMD ["node", "server.js"]
+# 启动命令
+CMD ["pnpm", "start"]
