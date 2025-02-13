@@ -1,0 +1,28 @@
+# 忽略开发相关文件
+**/node_modules
+**/.next
+.git
+.gitignore
+.DS_Store
+.env*.local
+docker-compose.yml
+.dockerignore
+Dockerfile
+README.md
+
+# 忽略构建产物
+dist
+out
+build
+
+# 忽略日志文件
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 忽略IDE文件
+.idea
+.vscode
+
+# 忽略测试相关
+coverage
